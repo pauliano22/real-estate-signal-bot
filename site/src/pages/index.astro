@@ -1,0 +1,315 @@
+---
+import Layout from '../layouts/Layout.astro';
+
+const CONTACT_EMAIL = 'pauliano2005@gmail.com';
+const CURRENT_YEAR = new Date().getFullYear();
+---
+
+<Layout>
+  <!-- ── NAV ──────────────────────────────────────────────── -->
+  <header class="sticky top-0 z-50 bg-white/90 backdrop-blur border-b border-slate-100">
+    <div class="max-w-5xl mx-auto px-6 h-14 flex items-center justify-between">
+      <span class="font-semibold text-slate-900 tracking-tight">
+        Real Estate Signal Service
+      </span>
+      <nav class="hidden sm:flex items-center gap-6 text-sm text-slate-600">
+        <a href="#service" class="hover:text-brand-600 transition-colors">Service</a>
+        <a href="#how-it-works" class="hover:text-brand-600 transition-colors">How It Works</a>
+        <a href="#contact" class="hover:text-brand-600 transition-colors">Contact</a>
+        <a href="#legal" class="hover:text-brand-600 transition-colors">Legal</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <!-- ── HERO ──────────────────────────────────────────────── -->
+    <section class="bg-gradient-to-b from-brand-50 to-white py-24 px-6">
+      <div class="max-w-3xl mx-auto text-center">
+        <div class="inline-flex items-center gap-2 bg-brand-100 text-brand-700 text-xs font-medium px-3 py-1 rounded-full mb-6">
+          AI-Powered Lead Intelligence
+        </div>
+        <h1 class="text-4xl sm:text-5xl font-bold text-slate-900 leading-tight mb-6">
+          Find motivated sellers<br class="hidden sm:block" />
+          before everyone else does.
+        </h1>
+        <p class="text-lg text-slate-600 max-w-xl mx-auto mb-10">
+          We monitor thousands of listings daily and surface the ones with real signals —
+          significant price cuts, extended time on market — then match them to local agents
+          with a ready buyer introduction.
+        </p>
+        <a
+          href={`mailto:${CONTACT_EMAIL}`}
+          class="inline-block bg-brand-600 hover:bg-brand-700 text-white font-medium px-8 py-3 rounded-lg transition-colors"
+        >
+          Get Your First Lead Free
+        </a>
+      </div>
+    </section>
+
+    <!-- ── SERVICE OVERVIEW ──────────────────────────────────── -->
+    <section id="service" class="py-20 px-6">
+      <div class="max-w-5xl mx-auto">
+        <div class="text-center mb-14">
+          <h2 class="text-3xl font-bold text-slate-900 mb-4">What We Deliver</h2>
+          <p class="text-slate-600 max-w-xl mx-auto">
+            Our engine runs every 30 minutes, scanning active listings in your target zip
+            codes for two high-confidence signals.
+          </p>
+        </div>
+
+        <div class="grid sm:grid-cols-3 gap-6">
+          <!-- Signal 1 -->
+          <div class="border border-slate-200 rounded-xl p-6 hover:border-brand-300 hover:shadow-sm transition">
+            <div class="text-2xl mb-4">📉</div>
+            <h3 class="font-semibold text-slate-900 mb-2">Price Drop Signal</h3>
+            <p class="text-sm text-slate-600 leading-relaxed">
+              Properties with a price reduction of 10% or more. A motivated seller adjusting
+              to market reality — the right time for a direct conversation.
+            </p>
+          </div>
+
+          <!-- Signal 2 -->
+          <div class="border border-slate-200 rounded-xl p-6 hover:border-brand-300 hover:shadow-sm transition">
+            <div class="text-2xl mb-4">🕐</div>
+            <h3 class="font-semibold text-slate-900 mb-2">Stale Listing Signal</h3>
+            <p class="text-sm text-slate-600 leading-relaxed">
+              Active listings that have exceeded 90 days on market. Sellers in this position
+              are statistically more open to creative solutions and buyer introductions.
+            </p>
+          </div>
+
+          <!-- Signal 3 -->
+          <div class="border border-slate-200 rounded-xl p-6 border-brand-300 bg-brand-50 shadow-sm">
+            <div class="text-2xl mb-4">⚡</div>
+            <h3 class="font-semibold text-slate-900 mb-2">High-Priority Combined</h3>
+            <p class="text-sm text-slate-600 leading-relaxed">
+              Properties triggering both signals are flagged as highest urgency. These get
+              the highest urgency score and are delivered to you first.
+            </p>
+          </div>
+        </div>
+
+        <!-- What's included -->
+        <div class="mt-12 bg-slate-50 rounded-2xl p-8">
+          <h3 class="font-semibold text-slate-900 mb-5">What you receive with each lead</h3>
+          <ul class="grid sm:grid-cols-2 gap-3 text-sm text-slate-700">
+            {[
+              'Full property address and listing URL',
+              'Exact days on market and price history',
+              'Listing agent name, email, and phone',
+              'Signal type and urgency score (0–100)',
+              'AI-drafted outreach email you can send immediately',
+              'LinkedIn profile when available',
+            ].map((item) => (
+              <li class="flex items-start gap-2">
+                <span class="text-brand-500 mt-0.5 shrink-0">✓</span>
+                {item}
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── HOW IT WORKS ──────────────────────────────────────── -->
+    <section id="how-it-works" class="bg-slate-50 py-20 px-6">
+      <div class="max-w-4xl mx-auto">
+        <div class="text-center mb-14">
+          <h2 class="text-3xl font-bold text-slate-900 mb-4">How It Works</h2>
+          <p class="text-slate-600">Simple. Automated. No CRM integration required.</p>
+        </div>
+
+        <div class="relative">
+          <!-- Connector line (desktop) -->
+          <div class="hidden sm:block absolute top-8 left-[calc(16.67%-1px)] right-[calc(16.67%-1px)] h-px bg-slate-200"></div>
+
+          <div class="grid sm:grid-cols-3 gap-8 relative">
+            {[
+              {
+                step: '01',
+                title: 'Signal Detected',
+                body: 'Our scanner finds a qualifying listing in your target zip codes — price drop or stale DOM threshold crossed.',
+              },
+              {
+                step: '02',
+                title: 'Agent Identified',
+                body: 'We find the listing agent, verify their email, and use AI to write a specific, non-generic outreach email.',
+              },
+              {
+                step: '03',
+                title: 'Lead Delivered',
+                body: 'Your first lead arrives free. If you want more, a payment link is sent. Once confirmed, the full report hits your inbox.',
+              },
+            ].map(({ step, title, body }) => (
+              <div class="text-center">
+                <div class="w-16 h-16 rounded-full bg-brand-600 text-white text-sm font-bold flex items-center justify-center mx-auto mb-4 relative z-10">
+                  {step}
+                </div>
+                <h3 class="font-semibold text-slate-900 mb-2">{title}</h3>
+                <p class="text-sm text-slate-600 leading-relaxed">{body}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <!-- Pricing callout -->
+        <div class="mt-14 border border-brand-200 bg-white rounded-xl p-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <p class="font-semibold text-slate-900">First lead is always free.</p>
+            <p class="text-sm text-slate-600 mt-1">
+              After that, leads are <strong>$49 each</strong> — no subscription, no commitment.
+              Pay only when you want a report.
+            </p>
+          </div>
+          <a
+            href={`mailto:${CONTACT_EMAIL}`}
+            class="shrink-0 inline-block bg-brand-600 hover:bg-brand-700 text-white font-medium px-6 py-2.5 rounded-lg text-sm transition-colors"
+          >
+            Request a Free Lead
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── CONTACT ────────────────────────────────────────────── -->
+    <section id="contact" class="py-20 px-6">
+      <div class="max-w-xl mx-auto text-center">
+        <h2 class="text-3xl font-bold text-slate-900 mb-4">Get in Touch</h2>
+        <p class="text-slate-600 mb-8">
+          Questions about the service, a specific market, or a custom zip code list?
+          Send a message and expect a reply within one business day.
+        </p>
+        <a
+          href={`mailto:${CONTACT_EMAIL}`}
+          class="inline-flex items-center gap-2 text-brand-600 hover:text-brand-700 font-medium text-lg border-b border-brand-300 hover:border-brand-600 transition-colors pb-0.5"
+        >
+          {CONTACT_EMAIL}
+        </a>
+      </div>
+    </section>
+
+    <!-- ── LEGAL ─────────────────────────────────────────────── -->
+    <section id="legal" class="bg-slate-50 py-20 px-6">
+      <div class="max-w-3xl mx-auto">
+        <h2 class="text-3xl font-bold text-slate-900 mb-12 text-center">Legal</h2>
+
+        <!-- Terms of Service -->
+        <div class="mb-12">
+          <h3 class="text-xl font-semibold text-slate-900 mb-1">Terms of Service</h3>
+          <p class="text-xs text-slate-500 mb-6">Last updated: {CURRENT_YEAR}</p>
+
+          <div class="prose prose-sm prose-slate max-w-none space-y-4 text-slate-700 leading-relaxed">
+            <p>
+              By using Real Estate Signal Service (the "Service"), you agree to these terms.
+              If you do not agree, do not use the Service.
+            </p>
+
+            <h4 class="font-semibold text-slate-800 mt-6">1. Service Description</h4>
+            <p>
+              We provide real estate lead data including property addresses, market signals,
+              and agent contact information sourced from publicly available listing data.
+              Leads are delivered electronically via email after payment is confirmed.
+            </p>
+
+            <h4 class="font-semibold text-slate-800 mt-6">2. Data Accuracy</h4>
+            <p>
+              We make reasonable efforts to ensure data accuracy but do not guarantee that
+              all information is current or complete. Real estate data changes frequently.
+              You are responsible for independently verifying any information before acting on it.
+            </p>
+
+            <h4 class="font-semibold text-slate-800 mt-6">3. Permitted Use</h4>
+            <p>
+              Lead data is licensed for your personal business use only. You may not resell,
+              redistribute, or share lead reports with third parties without written permission.
+            </p>
+
+            <h4 class="font-semibold text-slate-800 mt-6">4. Outreach Compliance</h4>
+            <p>
+              You are solely responsible for ensuring that any outreach you conduct using our
+              data complies with applicable laws including CAN-SPAM, TCPA, and state-level
+              real estate marketing regulations.
+            </p>
+
+            <h4 class="font-semibold text-slate-800 mt-6">5. Limitation of Liability</h4>
+            <p>
+              The Service is provided "as is." We are not liable for any direct, indirect, or
+              consequential damages arising from your use of our data or any outreach conducted
+              on the basis of our leads. Our total liability to you shall not exceed the amount
+              paid for the specific lead report in dispute.
+            </p>
+
+            <h4 class="font-semibold text-slate-800 mt-6">6. Modifications</h4>
+            <p>
+              We may update these terms at any time. Continued use of the Service after changes
+              are posted constitutes acceptance of the revised terms.
+            </p>
+
+            <h4 class="font-semibold text-slate-800 mt-6">7. Contact</h4>
+            <p>
+              For questions about these terms, email us at{' '}
+              <a href={`mailto:${CONTACT_EMAIL}`} class="text-brand-600 hover:underline">
+                {CONTACT_EMAIL}
+              </a>.
+            </p>
+          </div>
+        </div>
+
+        <hr class="border-slate-200 mb-12" />
+
+        <!-- Refund Policy -->
+        <div>
+          <h3 class="text-xl font-semibold text-slate-900 mb-1">Refund Policy</h3>
+          <p class="text-xs text-slate-500 mb-6">Last updated: {CURRENT_YEAR}</p>
+
+          <div class="prose prose-sm prose-slate max-w-none space-y-4 text-slate-700 leading-relaxed">
+            <p>
+              We want you to be satisfied with every lead report you purchase. This policy
+              explains when and how refunds are issued.
+            </p>
+
+            <h4 class="font-semibold text-slate-800 mt-6">Eligibility for a Refund</h4>
+            <p>You may request a full refund within <strong>7 days</strong> of purchase if:</p>
+            <ul class="list-disc pl-5 space-y-1">
+              <li>The property address in the report does not exist or was already sold prior to delivery.</li>
+              <li>The agent contact information is demonstrably incorrect (wrong person, non-existent email).</li>
+              <li>The signal data (days on market, price drop) was materially inaccurate at the time of delivery.</li>
+            </ul>
+
+            <h4 class="font-semibold text-slate-800 mt-6">Non-Refundable Situations</h4>
+            <p>Refunds will not be issued if:</p>
+            <ul class="list-disc pl-5 space-y-1">
+              <li>The agent did not respond to your outreach.</li>
+              <li>The property sold or was taken off market after delivery of your report.</li>
+              <li>You simply changed your mind after receiving the data.</li>
+              <li>More than 7 days have passed since purchase.</li>
+            </ul>
+
+            <h4 class="font-semibold text-slate-800 mt-6">How to Request a Refund</h4>
+            <p>
+              Email us at{' '}
+              <a href={`mailto:${CONTACT_EMAIL}`} class="text-brand-600 hover:underline">
+                {CONTACT_EMAIL}
+              </a>{' '}
+              with your order reference, the property address, and a brief description of the issue.
+              We will respond within 2 business days and process approved refunds within 5–10
+              business days via your original payment method.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ── FOOTER ────────────────────────────────────────────── -->
+  <footer class="border-t border-slate-100 py-8 px-6">
+    <div class="max-w-5xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-slate-500">
+      <span>&copy; {CURRENT_YEAR} Real Estate Signal Service. All rights reserved.</span>
+      <div class="flex items-center gap-6">
+        <a href="#legal" class="hover:text-slate-700 transition-colors">Terms of Service</a>
+        <a href="#legal" class="hover:text-slate-700 transition-colors">Refund Policy</a>
+        <a href={`mailto:${CONTACT_EMAIL}`} class="hover:text-slate-700 transition-colors">Contact</a>
+      </div>
+    </div>
+  </footer>
+</Layout>
