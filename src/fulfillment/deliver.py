@@ -85,12 +85,22 @@ def deliver_lead(lead: dict) -> bool:
         if cfg.MAIL_FROM_NAME
         else cfg.MAIL_FROM
     )
-    to_address = f"{buyer_name} <{buyer_email}>" if buyer_name else buyer_email
+
+    # --- DRY RUN INTERCEPT ---
+    if cfg.DRY_RUN_EMAIL:
+        actual_to = cfg.DRY_RUN_EMAIL
+        logger.warning(f"[DRY RUN] Redirecting fulfillment from {buyer_email} → {actual_to}")
+        subject = f"[DRY RUN] Lead Report: {property_address} (intended for: {buyer_email})"
+    else:
+        actual_to = buyer_email
+        subject = f"Your Lead Report: {property_address}"
+
+    to_address = actual_to
 
     payload = {
         "from": from_address,
         "to": [to_address],
-        "subject": f"Your Lead Report: {property_address}",
+        "subject": subject,
         "text": report,
     }
     if cfg.OPERATOR_EMAIL:

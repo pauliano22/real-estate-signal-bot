@@ -69,7 +69,18 @@ def send_outreach(
         if cfg.MAIL_FROM_NAME
         else cfg.MAIL_FROM
     )
-    to_address = f"{to_name} <{to_email}>" if to_name else to_email
+
+    # --- DRY RUN INTERCEPT ---
+    if cfg.DRY_RUN_EMAIL:
+        actual_to = cfg.DRY_RUN_EMAIL
+        logger.warning(
+            f"[DRY RUN] Redirecting email from {to_email} → {actual_to}"
+        )
+        subject = f"[DRY RUN] {subject} (intended for: {to_email})"
+    else:
+        actual_to = to_email
+
+    to_address = f"{to_name} <{actual_to}>" if (to_name and not cfg.DRY_RUN_EMAIL) else actual_to
 
     try:
         response = resend.Emails.send({
@@ -80,7 +91,7 @@ def send_outreach(
             "text": tracked_body,
         })
         email_id = response.get("id", "")
-        logger.info(f"[sender] Sent to {to_email} — resend id: {email_id}")
+        logger.info(f"[sender] Sent to {actual_to} — resend id: {email_id}")
         return email_id
     except Exception as e:
         logger.error(f"[sender] Failed to send to {to_email}: {e}")

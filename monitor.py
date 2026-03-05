@@ -153,12 +153,20 @@ def step_enrich(run_id: int) -> int:
     return enriched
 
 
-def step_draft_and_send(run_id: int) -> int:
-    """Draft + send free outreach for all ENRICHED leads. Returns count sent."""
+def step_draft_and_send(run_id: int, dry_run_limit: int = 0) -> int:
+    """
+    Draft + send free outreach for all ENRICHED leads.
+    dry_run_limit: if > 0, stop after this many sends (use 1 for dry run).
+    Returns count sent.
+    """
     enriched_leads = models.get_leads_in_state("ENRICHED")
     sent = 0
 
     for lead in enriched_leads:
+        if dry_run_limit and sent >= dry_run_limit:
+            logger.info(f"[outreach] Dry run limit of {dry_run_limit} reached — stopping.")
+            break
+
         try:
             agent_name = lead.get("agent_name", "")
             first_name = agent_name.split()[0] if agent_name else "there"
@@ -172,6 +180,17 @@ def step_draft_and_send(run_id: int) -> int:
                 list_price=lead.get("list_price"),
                 signal_type=lead["signal_type"],
                 sender_name=cfg.MAIL_FROM_NAME,
+            )
+
+            # Always print the draft so it can be reviewed before it goes out
+            print(
+                f"\n{'─'*60}\n"
+                f"  DRAFT EMAIL — Lead #{lead['id']}\n"
+                f"{'─'*60}\n"
+                f"  To      : {lead['agent_email']}\n"
+                f"  Subject : {draft['subject']}\n"
+                f"\n{draft['body']}\n"
+                f"{'─'*60}\n"
             )
 
             message_id = send_outreach(
@@ -219,9 +238,9 @@ def step_expire_stale() -> int:
 # Main cycle
 # ---------------------------------------------------------------------------
 
-def run_cycle():
+def run_cycle(once: bool = False):
     run_id = models.start_run()
-    logger.info(f"=== Cycle start — run #{run_id} ===")
+    logger.info(f"=== Cycle start — run #{run_id} {'[DRY RUN — ONCE]' if once else ''} ===")
 
     total_signals = 0
     total_enriched = 0
@@ -255,7 +274,7 @@ def run_cycle():
 
     # --- Step 3: Draft + Send ---
     try:
-        total_sent = step_draft_and_send(run_id)
+        total_sent = step_draft_and_send(run_id, dry_run_limit=1 if once else 0)
         logger.info(f"[cycle] {total_sent} emails sent")
     except Exception as e:
         logger.error(f"[cycle] Outreach step failed: {e}")
@@ -285,21 +304,33 @@ def on_job_event(event):
 if __name__ == "__main__":
     import os
     os.makedirs("logs", exist_ok=True)
+
+    # --once: run a single cycle and exit (used for dry runs and testing)
+    if "--once" in sys.argv:
+        if cfg.DRY_RUN_EMAIL:
+            print(f"\n*** DRY RUN MODE — all emails redirected to {cfg.DRY_RUN_EMAIL} ***\n")
+        logger.info("Running single cycle (--once mode)...")
+        run_cycle(once=True)
+        logger.info("Single cycle complete. Exiting.")
+        sys.exit(0)
+
+    # Normal scheduler mode
     logger.info("Real Estate Signal Bot starting...")
+    if cfg.DRY_RUN_EMAIL:
+        logger.warning(f"*** DRY RUN MODE — all emails redirected to {cfg.DRY_RUN_EMAIL} ***")
 
     scheduler = BlockingScheduler(timezone="UTC")
     scheduler.add_listener(on_job_event, EVENT_JOB_ERROR | EVENT_JOB_EXECUTED)
 
-    # Run immediately on start, then every N minutes
     scheduler.add_job(
         run_cycle,
         trigger="interval",
         minutes=cfg.MONITOR_INTERVAL_MINUTES,
-        max_instances=1,           # never overlap runs
-        next_run_time=datetime.utcnow(),  # run immediately on start
+        max_instances=1,
+        next_run_time=datetime.utcnow(),
         id="signal_cycle",
         name="Real Estate Signal Cycle",
-        misfire_grace_time=300,    # allow 5min late start before skipping
+        misfire_grace_time=300,
     )
 
     logger.info(f"Scheduler running — cycle every {cfg.MONITOR_INTERVAL_MINUTES} minutes")

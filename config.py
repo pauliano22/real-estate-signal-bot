@@ -32,6 +32,10 @@ class Config:
     OPERATOR_EMAIL: str = os.environ["OPERATOR_EMAIL"]
     BASE_URL: str = os.environ["BASE_URL"].rstrip("/")
 
+    # Dry run — when set, ALL outgoing emails are redirected to this address.
+    # Real agent emails are never contacted. Unset (or empty) = live mode.
+    DRY_RUN_EMAIL: str = os.environ.get("DRY_RUN_EMAIL", "")
+
     # Scheduler
     MONITOR_INTERVAL_MINUTES: int = int(os.environ.get("MONITOR_INTERVAL_MINUTES", "30"))
 
