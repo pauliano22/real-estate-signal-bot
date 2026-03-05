@@ -15,15 +15,17 @@ from config import cfg
 
 # Valid one-way transitions
 VALID_TRANSITIONS = {
-    "FOUND":        {"ENRICHED", "STALE", "ERROR"},
-    "ENRICHED":     {"EMAILED_FREE", "STALE", "ERROR"},
-    "EMAILED_FREE": {"REPLIED", "STALE", "ERROR"},
-    "REPLIED":      {"INVOICED", "ERROR"},
-    "INVOICED":     {"PAID", "ERROR"},
-    "PAID":         {"FULFILLED", "ERROR"},
-    "FULFILLED":    set(),
-    "STALE":        set(),
-    "ERROR":        {"FOUND"},  # allows manual retry
+    "FOUND":                  {"ENRICHED", "STALE", "ERROR"},
+    "ENRICHED":               {"EMAILED_FREE", "STALE", "ERROR"},
+    "EMAILED_FREE":           {"PENDING_MANUAL_REVIEW", "STALE", "ERROR"},
+    "PENDING_MANUAL_REVIEW":  {"FULFILLED", "STALE", "ERROR"},
+    # Stripe path — kept for later, not active in current flow
+    "REPLIED":                {"INVOICED", "ERROR"},
+    "INVOICED":               {"PAID", "ERROR"},
+    "PAID":                   {"FULFILLED", "ERROR"},
+    "FULFILLED":              set(),
+    "STALE":                  set(),
+    "ERROR":                  {"FOUND"},  # allows manual retry
 }
 
 
@@ -164,6 +166,10 @@ def mark_fulfilled(lead_id: int):
         )
 
 
+def mark_pending_review(lead_id: int):
+    transition(lead_id, "PENDING_MANUAL_REVIEW", reason="free email sent — awaiting operator review")
+
+
 def mark_stale(lead_id: int, reason: str = "no engagement after 7 days"):
     _force_state(lead_id, "STALE", reason)
 
@@ -216,6 +222,12 @@ def _log_transition(conn, lead_id, from_state, to_state, reason):
 # Queries
 # ---------------------------------------------------------------------------
 
+def get_lead_by_id(lead_id: int) -> Optional[dict]:
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM leads WHERE id=?", (lead_id,)).fetchone()
+        return dict(row) if row else None
+
+
 def get_leads_in_state(state: str) -> list[dict]:
     with get_conn() as conn:
         rows = conn.execute(
@@ -234,15 +246,13 @@ def get_lead_by_session(session_id: str) -> Optional[dict]:
 
 
 def get_stale_candidates(days_since_email: int = 7) -> list[dict]:
-    """Leads emailed > N days ago with no engagement."""
+    """Leads in PENDING_MANUAL_REVIEW > N days with no operator action."""
     with get_conn() as conn:
         rows = conn.execute("""
             SELECT * FROM leads
-            WHERE state='EMAILED_FREE'
+            WHERE state='PENDING_MANUAL_REVIEW'
               AND emailed_at IS NOT NULL
               AND (julianday('now') - julianday(emailed_at)) > ?
-              AND email_opened = 0
-              AND link_clicked = 0
         """, (days_since_email,)).fetchall()
         return [dict(r) for r in rows]
 

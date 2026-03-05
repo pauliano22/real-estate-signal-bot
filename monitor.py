@@ -184,8 +184,18 @@ def step_draft_and_send(run_id: int) -> int:
 
             if message_id:
                 models.mark_emailed(lead["id"], draft["subject"], draft["body"], message_id)
+                models.mark_pending_review(lead["id"])
                 sent += 1
                 logger.info(f"[outreach] Sent to {lead['agent_email']} for lead #{lead['id']}")
+                print(
+                    f"\n{'='*60}\n"
+                    f"  ACTION REQUIRED — Lead #{lead['id']} ready for review\n"
+                    f"  Property : {lead['property_address']}\n"
+                    f"  Agent    : {lead.get('agent_name')} <{lead['agent_email']}>\n"
+                    f"  Signal   : {lead['signal_type']} | Score: {lead.get('signal_score')}/100\n"
+                    f"  To fulfill: python scripts/mock_fulfill.py {lead['id']}\n"
+                    f"{'='*60}\n"
+                )
             else:
                 logger.warning(f"[outreach] Send failed for lead #{lead['id']}")
 
