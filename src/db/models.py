@@ -31,6 +31,115 @@ VALID_TRANSITIONS = {
 }
 
 
+def init_db():
+    """Create all tables if they don't exist. Safe to call on every startup."""
+    with sqlite3.connect(cfg.DB_PATH) as conn:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS leads (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                property_address    TEXT NOT NULL UNIQUE,
+                zip_code            TEXT,
+                signal_type         TEXT,
+                listing_url         TEXT,
+                list_price          REAL,
+                original_price      REAL,
+                price_drop_pct      REAL,
+                days_on_market      INTEGER,
+                signal_score        REAL DEFAULT 0,
+                state               TEXT NOT NULL DEFAULT 'FOUND',
+                agent_name          TEXT,
+                agent_email         TEXT,
+                agent_phone         TEXT,
+                agent_company       TEXT,
+                agent_website       TEXT,
+                email_verified      INTEGER DEFAULT 0,
+                email_subject       TEXT,
+                email_body          TEXT,
+                sendgrid_message_id TEXT,
+                stripe_payment_link TEXT,
+                stripe_session_id   TEXT,
+                email_opened        INTEGER DEFAULT 0,
+                link_clicked        INTEGER DEFAULT 0,
+                found_at            TEXT,
+                enriched_at         TEXT,
+                emailed_at          TEXT,
+                replied_at          TEXT,
+                invoiced_at         TEXT,
+                paid_at             TEXT,
+                fulfilled_at        TEXT,
+                last_updated        TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS state_transitions (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                lead_id         INTEGER NOT NULL,
+                from_state      TEXT,
+                to_state        TEXT,
+                reason          TEXT,
+                transitioned_at TEXT,
+                FOREIGN KEY (lead_id) REFERENCES leads(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS tracking_events (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                lead_id           INTEGER NOT NULL,
+                event_type        TEXT NOT NULL,
+                tracking_token    TEXT UNIQUE,
+                link_destination  TEXT,
+                triggered_at      TEXT,
+                ip_address        TEXT,
+                user_agent        TEXT,
+                logged_at         TEXT,
+                FOREIGN KEY (lead_id) REFERENCES leads(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS target_zips (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                zip_code  TEXT UNIQUE NOT NULL,
+                city      TEXT,
+                state     TEXT,
+                active    INTEGER DEFAULT 1,
+                added_at  TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS run_log (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_started_at    TEXT,
+                run_finished_at   TEXT,
+                signals_found     INTEGER DEFAULT 0,
+                agents_enriched   INTEGER DEFAULT 0,
+                emails_sent       INTEGER DEFAULT 0,
+                payments_received INTEGER DEFAULT 0,
+                errors            INTEGER DEFAULT 0,
+                status            TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS self_heal_log (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                source       TEXT,
+                zip_code     TEXT,
+                error_type   TEXT,
+                error_detail TEXT,
+                action_taken TEXT,
+                logged_at    TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS conversations (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                lead_id     INTEGER NOT NULL,
+                direction   TEXT NOT NULL,
+                from_email  TEXT,
+                to_email    TEXT,
+                subject     TEXT,
+                body        TEXT,
+                sent_at     TEXT,
+                FOREIGN KEY (lead_id) REFERENCES leads(id)
+            );
+        """)
+
+
 @contextmanager
 def get_conn():
     conn = sqlite3.connect(cfg.DB_PATH)

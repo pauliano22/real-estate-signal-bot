@@ -27,6 +27,10 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
+# Ensure all tables exist on every cold start (safe — uses CREATE TABLE IF NOT EXISTS)
+models.init_db()
+logger.info("[startup] Database initialised")
+
 
 # ---------------------------------------------------------------------------
 # Health check
