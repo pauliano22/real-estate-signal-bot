@@ -30,7 +30,7 @@ def _parse_lead_id(to_field: str) -> int | None:
 
 def _fetch_email_body(email_id: str) -> str:
     """Fetch full email from Resend API and return plain text (or stripped HTML)."""
-    url = f"https://api.resend.com/emails/{email_id}"
+    url = f"https://api.resend.com/emails/receiving/{email_id}"
     try:
         resp = httpx.get(url, headers={"Authorization": f"Bearer {cfg.RESEND_API_KEY}"}, timeout=10)
         resp.raise_for_status()
