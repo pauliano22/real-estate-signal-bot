@@ -93,8 +93,6 @@ def stripe_webhook():
 
 @app.post("/inbound/email")
 def inbound_email():
-    logger.info(f"[inbound] Headers: {request.headers}")
-    logger.info(f"[inbound] Raw data: {request.get_data(as_text=True)}")
     payload = request.get_json(force=True, silent=True) or {}
     try:
         handle_inbound(payload)
