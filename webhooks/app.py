@@ -6,6 +6,7 @@ Or with gunicorn: gunicorn webhooks.app:app
 
 Endpoints:
   POST /stripe/webhook         — Stripe payment events
+  POST /inbound/email          — Resend inbound email forwarding
   GET  /track/open/<token>     — Email open pixel
   GET  /track/click/<token>    — Email link redirect
   GET  /payment/success        — Post-payment landing page
@@ -19,6 +20,7 @@ from flask import Flask, request, jsonify, redirect, Response
 from config import cfg
 from src.db import models
 from src.fulfillment.deliver import deliver_lead
+from webhooks.inbound import handle_inbound
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -86,6 +88,21 @@ def stripe_webhook():
 
 
 # ---------------------------------------------------------------------------
+# Inbound email
+# ---------------------------------------------------------------------------
+
+@app.post("/inbound/email")
+def inbound_email():
+    payload = request.get_json(force=True, silent=True) or {}
+    try:
+        handle_inbound(payload)
+    except Exception as e:
+        logger.error(f"[inbound] Unhandled error: {e}")
+    # Always return 200 so Resend doesn't retry
+    return jsonify({"received": True}), 200
+
+
+# ---------------------------------------------------------------------------
 # Email tracking
 # ---------------------------------------------------------------------------
 
@@ -112,11 +129,7 @@ def track_open(token: str):
     if row:
         lead_id = row["lead_id"]
         models.record_tracking_event(lead_id, "open", token, ip=ip, ua=ua)
-
-        # Auto-advance to REPLIED if still in EMAILED_FREE
-        lead = _get_lead(lead_id)
-        if lead and lead["state"] == "EMAILED_FREE":
-            _trigger_invoice(lead_id)
+        logger.info(f"[track] Open event for lead {lead_id}")
 
     return Response(TRANSPARENT_PIXEL, mimetype="image/gif")
 
@@ -137,11 +150,7 @@ def track_click(token: str):
         lead_id = row["lead_id"]
         destination = row["link_destination"] or cfg.BASE_URL
         models.record_tracking_event(lead_id, "click", token, destination=destination, ip=ip, ua=ua)
-
-        lead = _get_lead(lead_id)
-        if lead and lead["state"] == "EMAILED_FREE":
-            _trigger_invoice(lead_id)
-
+        logger.info(f"[track] Click event for lead {lead_id} → {destination}")
         return redirect(destination, code=302)
 
     return redirect(cfg.BASE_URL, code=302)
@@ -167,43 +176,6 @@ def _get_lead(lead_id: int) -> dict | None:
         return dict(row) if row else None
 
 
-def _trigger_invoice(lead_id: int):
-    """Mark as REPLIED and generate Stripe payment link."""
-    from src.payments.stripe_client import create_payment_link
-    from src.outreach.sender import send_outreach
-
-    try:
-        lead = _get_lead(lead_id)
-        if not lead or lead["state"] != "EMAILED_FREE":
-            return
-
-        models.mark_replied(lead_id)
-
-        result = create_payment_link(lead_id, lead["property_address"])
-        if not result:
-            logger.error(f"[webhook] Could not create payment link for lead {lead_id}")
-            return
-
-        models.mark_invoiced(lead_id, result["url"], result["session_id"])
-
-        # Send payment link email
-        invoice_body = (
-            f"Thanks for your interest in the {lead['property_address']} lead.\n\n"
-            f"You can access the full report here:\n{result['url']}\n\n"
-            f"{cfg.MAIL_FROM_NAME}"
-        )
-        send_outreach(
-            lead_id=lead_id,
-            to_email=lead["agent_email"],
-            to_name=lead["agent_name"] or "",
-            subject=f"Your Lead Report — {lead['property_address']}",
-            body=invoice_body,
-        )
-        logger.info(f"[webhook] Invoice sent to {lead['agent_email']} for lead {lead_id}")
-
-    except Exception as e:
-        logger.error(f"[webhook] Error triggering invoice for lead {lead_id}: {e}")
-
-
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=False)

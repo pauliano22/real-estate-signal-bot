@@ -18,6 +18,12 @@ class PropertySignal:
     signal_type: str       # PRICE_DROP | STALE_LISTING | BOTH
     signal_score: float    # 0–100 urgency score
     raw: dict              # raw API/scrape response for debugging
+    # Optional agent data — populated by sources that include it (e.g. RentCast)
+    # When present, monitor.py skips the Google Maps + Apollo enrichment step
+    agent_name: Optional[str] = None
+    agent_email: Optional[str] = None
+    agent_phone: Optional[str] = None
+    agent_website: Optional[str] = None
 
 
 class SignalAdapter(ABC):

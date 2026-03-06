@@ -19,6 +19,10 @@ logger = logging.getLogger(__name__)
 APOLLO_MATCH_URL = "https://api.apollo.io/v1/people/match"
 
 
+class ApolloAuthError(Exception):
+    """Raised when Apollo returns 401/403 — key is invalid or plan doesn't cover this endpoint."""
+
+
 def get_domain(website: str) -> str | None:
     """Extract root domain from a URL."""
     if not website:
@@ -110,16 +114,20 @@ def find_email(agent_name: str, website: str, company_name: str = None) -> dict 
         }
 
         logger.info(
-            f"[enrichment] Apollo matched {agent_name} → {email} "
+            f"[enrichment] Apollo matched {agent_name} -> {email} "
             f"(status: {email_status}, linkedin: {bool(result['linkedin_url'])})"
         )
         return result
 
     except httpx.HTTPStatusError as e:
-        if e.response.status_code == 422:
+        status = e.response.status_code
+        if status in (401, 403):
+            logger.warning(f"[enrichment] Apollo auth error ({status}) — key invalid or plan restriction")
+            raise ApolloAuthError(f"Apollo {status}") from e
+        if status == 422:
             logger.debug(f"[enrichment] Apollo 422 — insufficient data for {agent_name}")
         else:
-            logger.error(f"[enrichment] Apollo HTTP error for {agent_name}: {e.response.status_code}")
+            logger.error(f"[enrichment] Apollo HTTP error for {agent_name}: {status}")
         return None
     except Exception as e:
         logger.error(f"[enrichment] Unexpected error for {agent_name}: {e}")

@@ -17,15 +17,17 @@ from config import cfg
 VALID_TRANSITIONS = {
     "FOUND":                  {"ENRICHED", "STALE", "ERROR"},
     "ENRICHED":               {"EMAILED_FREE", "STALE", "ERROR"},
-    "EMAILED_FREE":           {"PENDING_MANUAL_REVIEW", "STALE", "ERROR"},
-    "PENDING_MANUAL_REVIEW":  {"FULFILLED", "STALE", "ERROR"},
-    # Stripe path — kept for later, not active in current flow
-    "REPLIED":                {"INVOICED", "ERROR"},
+    "EMAILED_FREE":           {"NEGOTIATING", "STALE", "ERROR"},
+    "NEGOTIATING":            {"INVOICED", "PENDING_OPERATOR", "STALE", "ERROR"},
+    "PENDING_OPERATOR":       {"NEGOTIATING", "STALE", "ERROR"},
     "INVOICED":               {"PAID", "ERROR"},
     "PAID":                   {"FULFILLED", "ERROR"},
     "FULFILLED":              set(),
     "STALE":                  set(),
     "ERROR":                  {"FOUND"},  # allows manual retry
+    # Legacy state — kept so existing records aren't broken, not produced going forward
+    "PENDING_MANUAL_REVIEW":  {"FULFILLED", "STALE", "ERROR"},
+    "REPLIED":                {"INVOICED", "ERROR"},
 }
 
 
@@ -166,7 +168,21 @@ def mark_fulfilled(lead_id: int):
         )
 
 
+def mark_negotiating(lead_id: int):
+    transition(lead_id, "NEGOTIATING", reason="agent replied — conversation in progress")
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE leads SET replied_at=?, last_updated=? WHERE id=?",
+            (now(), now(), lead_id)
+        )
+
+
+def mark_pending_operator(lead_id: int):
+    transition(lead_id, "PENDING_OPERATOR", reason="complex thread — awaiting operator review")
+
+
 def mark_pending_review(lead_id: int):
+    """Legacy — kept for backward compat, not called going forward."""
     transition(lead_id, "PENDING_MANUAL_REVIEW", reason="free email sent — awaiting operator review")
 
 
@@ -190,7 +206,7 @@ def transition(lead_id: int, to_state: str, reason: str = ""):
         from_state = row["state"]
         if to_state not in VALID_TRANSITIONS.get(from_state, set()):
             raise ValueError(
-                f"Invalid transition: {from_state} → {to_state} for lead {lead_id}"
+                f"Invalid transition: {from_state} -> {to_state} for lead {lead_id}"
             )
         conn.execute(
             "UPDATE leads SET state=?, last_updated=? WHERE id=?",
@@ -246,13 +262,13 @@ def get_lead_by_session(session_id: str) -> Optional[dict]:
 
 
 def get_stale_candidates(days_since_email: int = 7) -> list[dict]:
-    """Leads in PENDING_MANUAL_REVIEW > N days with no operator action."""
+    """Leads in active conversation states > N days with no engagement → STALE."""
     with get_conn() as conn:
         rows = conn.execute("""
             SELECT * FROM leads
-            WHERE state='PENDING_MANUAL_REVIEW'
+            WHERE state IN ('EMAILED_FREE', 'NEGOTIATING', 'PENDING_OPERATOR', 'PENDING_MANUAL_REVIEW')
               AND emailed_at IS NOT NULL
-              AND (julianday('now') - julianday(emailed_at)) > ?
+              AND (julianday('now') - julianday(last_updated)) > ?
         """, (days_since_email,)).fetchall()
         return [dict(r) for r in rows]
 
@@ -335,3 +351,64 @@ def log_self_heal(source: str, zip_code: str, error_type: str,
                 (source, zip_code, error_type, error_detail, action_taken, logged_at)
             VALUES (?, ?, ?, ?, ?, ?)
         """, (source, zip_code, error_type, error_detail, action_taken, now()))
+
+
+# ---------------------------------------------------------------------------
+# Conversations
+# ---------------------------------------------------------------------------
+
+def _ensure_conversations_table():
+    """Idempotent migration — creates the conversations table if missing."""
+    with get_conn() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS conversations (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                lead_id     INTEGER NOT NULL,
+                direction   TEXT NOT NULL,
+                from_email  TEXT,
+                to_email    TEXT,
+                subject     TEXT,
+                body        TEXT,
+                sent_at     TEXT,
+                FOREIGN KEY (lead_id) REFERENCES leads(id)
+            )
+        """)
+
+
+def store_message(
+    lead_id: int,
+    direction: str,
+    from_email: str,
+    to_email: str,
+    subject: str,
+    body: str,
+):
+    """Persist an inbound or outbound message to the conversations log."""
+    _ensure_conversations_table()
+    with get_conn() as conn:
+        conn.execute("""
+            INSERT INTO conversations
+                (lead_id, direction, from_email, to_email, subject, body, sent_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (lead_id, direction, from_email, to_email, subject, body, now()))
+
+
+def get_thread(lead_id: int) -> list[dict]:
+    """Return all messages for a lead in chronological order."""
+    _ensure_conversations_table()
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM conversations WHERE lead_id=? ORDER BY sent_at ASC",
+            (lead_id,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_lead_by_email(agent_email: str) -> Optional[dict]:
+    """Fallback lookup by agent email (used when +tag parsing fails)."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM leads WHERE agent_email=? ORDER BY last_updated DESC LIMIT 1",
+            (agent_email,)
+        ).fetchone()
+        return dict(row) if row else None

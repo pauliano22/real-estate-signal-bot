@@ -18,6 +18,9 @@ class Config:
     # Apollo.io
     APOLLO_API_KEY: str = os.environ["APOLLO_API_KEY"]
 
+    # RentCast
+    RENTCAST_API_KEY: str = os.environ["RENTCAST_API_KEY"]
+
     # Resend
     RESEND_API_KEY: str = os.environ["RESEND_API_KEY"]
     MAIL_FROM: str = os.environ["MAIL_FROM"]
@@ -31,6 +34,9 @@ class Config:
     # Operator
     OPERATOR_EMAIL: str = os.environ["OPERATOR_EMAIL"]
     BASE_URL: str = os.environ["BASE_URL"].rstrip("/")
+    # Inbound reply routing — set to the subdomain Resend inbound is configured on
+    # e.g. "reply.yourdomain.com". Reply-To will be reply+{lead_id}@{REPLY_DOMAIN}
+    REPLY_DOMAIN: str = os.environ.get("REPLY_DOMAIN", "")
 
     # Dry run — when set, ALL outgoing emails are redirected to this address.
     # Real agent emails are never contacted. Unset (or empty) = live mode.

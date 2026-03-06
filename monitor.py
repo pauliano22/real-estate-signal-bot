@@ -3,14 +3,14 @@ monitor.py — Autonomous orchestration loop.
 
 Runs every 30 minutes via APScheduler. Never crashes silently.
 Each cycle:
-  1. Fetch signals from Redfin (fallback: Zillow stealth)
-  2. Discover agents in signal zip codes via Google Maps
-  3. Enrich agent emails via Hunter.io
-  4. Draft hyper-relevant emails via Claude
-  5. Send via SendGrid
-  6. Mark stale leads that haven't engaged in 7 days
+  1. Fetch signals from RentCast API
+  2. If agent data missing from listing, discover via Google Maps + Apollo
+  3. Draft hyper-relevant emails via Claude
+  4. Send via Resend
+  5. Mark stale leads that haven't engaged in 7 days
 
 Run: python monitor.py
+Run one cycle: python monitor.py --once
 """
 import logging
 import sys
@@ -22,11 +22,9 @@ from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED
 
 from config import cfg
 from src.db import models
-from src.signals.redfin import RedfinAdapter
-from src.signals.zillow_stealth import ZillowStealthAdapter
+from src.signals.rentcast import RentCastAdapter
 from src.agents.google_maps import find_agents_in_zip
-from src.agents.enrichment import find_email
-from src.matchmaker.scorer import score_signal
+from src.agents.enrichment import find_email, ApolloAuthError
 from src.matchmaker.drafter import draft_email
 from src.outreach.sender import send_outreach
 
@@ -35,7 +33,7 @@ from src.outreach.sender import send_outreach
 # ---------------------------------------------------------------------------
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
+    format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
     handlers=[
         logging.StreamHandler(sys.stdout),
         logging.FileHandler("logs/monitor.log", encoding="utf-8"),
@@ -46,27 +44,9 @@ self_heal_logger = logging.getLogger("self_heal")
 self_heal_logger.addHandler(logging.FileHandler("logs/self_heal.log", encoding="utf-8"))
 
 # ---------------------------------------------------------------------------
-# Adapter state (for self-healing)
+# Adapter
 # ---------------------------------------------------------------------------
-_primary_adapter = RedfinAdapter()
-_fallback_adapter = ZillowStealthAdapter()
-_adapter_failures: dict[str, int] = {}  # zip_code → consecutive failure count
-
-
-def _get_adapter(zip_code: str):
-    failures = _adapter_failures.get(zip_code, 0)
-    if failures >= cfg.MAX_CONSECUTIVE_FAILURES:
-        self_heal_logger.warning(
-            f"[SELF_HEAL] zip={zip_code} failed {failures}x on Redfin — switching to Zillow stealth"
-        )
-        models.log_self_heal(
-            source="redfin", zip_code=zip_code,
-            error_type="MAX_FAILURES",
-            error_detail=f"{failures} consecutive failures",
-            action_taken="switched to zillow_stealth adapter",
-        )
-        return _fallback_adapter
-    return _primary_adapter
+_adapter = RentCastAdapter(api_key=cfg.RENTCAST_API_KEY)
 
 
 # ---------------------------------------------------------------------------
@@ -75,26 +55,27 @@ def _get_adapter(zip_code: str):
 
 def step_signals(zip_code: str, run_id: int) -> list:
     """Fetch property signals for a zip code. Returns list of PropertySignal."""
-    adapter = _get_adapter(zip_code)
     try:
-        signals = adapter.fetch_signals(zip_code)
-        _adapter_failures[zip_code] = 0  # reset on success
+        signals = _adapter.fetch_signals(zip_code)
         return signals
     except Exception as e:
-        _adapter_failures[zip_code] = _adapter_failures.get(zip_code, 0) + 1
-        count = _adapter_failures[zip_code]
-        logger.error(f"[signals] {zip_code} — {adapter.name} failed (#{count}): {e}")
+        logger.error(f"[signals] {zip_code} — rentcast failed: {e}")
         models.log_self_heal(
-            source=adapter.name, zip_code=zip_code,
+            source="rentcast", zip_code=zip_code,
             error_type=type(e).__name__,
             error_detail=str(e),
-            action_taken=f"logged failure #{count}, will retry or switch at {cfg.MAX_CONSECUTIVE_FAILURES}",
+            action_taken="logged failure, will retry next cycle",
         )
         return []
 
 
 def step_upsert_signals(signals: list) -> list[int]:
-    """Insert new signals into DB. Returns list of new lead IDs."""
+    """
+    Insert new signals into DB.
+    If a signal already carries agent data from RentCast, immediately
+    advance it to ENRICHED so the outreach step picks it up this cycle.
+    Returns list of new lead IDs.
+    """
     new_ids = []
     for signal in signals:
         lead_id = models.upsert_lead(
@@ -108,15 +89,45 @@ def step_upsert_signals(signals: list) -> list[int]:
             days_on_market=signal.days_on_market,
             signal_score=signal.signal_score,
         )
-        if lead_id:
-            new_ids.append(lead_id)
-            logger.info(f"[upsert] New lead #{lead_id}: {signal.address} (score: {signal.signal_score})")
+        if not lead_id:
+            continue
+
+        new_ids.append(lead_id)
+
+        # RentCast includes agent contact — skip Google Maps + Apollo
+        if signal.agent_email:
+            models.enrich_lead(
+                lead_id=lead_id,
+                agent_name=signal.agent_name or "",
+                agent_email=signal.agent_email,
+                agent_phone=signal.agent_phone,
+                agent_website=signal.agent_website,
+                email_verified=True,
+            )
+            logger.info(
+                f"[upsert] Lead #{lead_id}: {signal.address} "
+                f"(score: {signal.signal_score}) -> auto-enriched: {signal.agent_email}"
+            )
+        else:
+            logger.info(
+                f"[upsert] Lead #{lead_id}: {signal.address} "
+                f"(score: {signal.signal_score}) -> needs enrichment"
+            )
+
     return new_ids
 
 
 def step_enrich(run_id: int) -> int:
-    """Find agents for all FOUND leads. Returns count enriched."""
+    """
+    Find agents for FOUND leads that RentCast didn't include contact for (~5%).
+    Falls back to Google Maps + Apollo enrichment.
+    Bails immediately on Apollo auth errors (403) — no point hammering a
+    broken key across all remaining leads.
+    """
     found_leads = models.get_leads_in_state("FOUND")
+    if not found_leads:
+        return 0
+
     enriched = 0
 
     for lead in found_leads:
@@ -127,7 +138,6 @@ def step_enrich(run_id: int) -> int:
                 logger.info(f"[enrich] No agents found for zip {zip_code}")
                 continue
 
-            # Match the first agent with a findable email
             for agent in agents:
                 email_data = find_email(agent["name"], agent.get("website", ""), agent.get("name"))
                 if email_data and email_data["email"]:
@@ -141,11 +151,17 @@ def step_enrich(run_id: int) -> int:
                         email_verified=email_data.get("verified", False),
                     )
                     enriched += 1
-                    logger.info(f"[enrich] Lead #{lead['id']} → {agent['name']} <{email_data['email']}>")
-                    break  # one agent per lead
+                    logger.info(f"[enrich] Lead #{lead['id']} -> {agent['name']} <{email_data['email']}>")
+                    break
             else:
-                logger.info(f"[enrich] Lead #{lead['id']}: no verified email found for zip {zip_code}")
+                logger.info(f"[enrich] Lead #{lead['id']}: no email found for zip {zip_code}")
 
+        except ApolloAuthError:
+            logger.warning(
+                f"[enrich] Apollo auth error — skipping remaining FOUND leads this cycle. "
+                f"Check APOLLO_API_KEY in .env."
+            )
+            break
         except Exception as e:
             logger.error(f"[enrich] Error for lead #{lead['id']}: {e}")
             models.mark_error(lead["id"], f"enrichment error: {e}")
@@ -162,8 +178,9 @@ def step_draft_and_send(run_id: int, dry_run_limit: int = 0) -> int:
     enriched_leads = models.get_leads_in_state("ENRICHED")
     sent = 0
 
+    attempted = 0
     for lead in enriched_leads:
-        if dry_run_limit and sent >= dry_run_limit:
+        if dry_run_limit and attempted >= dry_run_limit:
             logger.info(f"[outreach] Dry run limit of {dry_run_limit} reached — stopping.")
             break
 
@@ -183,14 +200,16 @@ def step_draft_and_send(run_id: int, dry_run_limit: int = 0) -> int:
             )
 
             # Always print the draft so it can be reviewed before it goes out
+            safe_subject = draft['subject'].encode('ascii', errors='replace').decode('ascii')
+            safe_body = draft['body'].encode('ascii', errors='replace').decode('ascii')
             print(
-                f"\n{'─'*60}\n"
-                f"  DRAFT EMAIL — Lead #{lead['id']}\n"
-                f"{'─'*60}\n"
+                f"\n{'-'*60}\n"
+                f"  DRAFT EMAIL - Lead #{lead['id']}\n"
+                f"{'-'*60}\n"
                 f"  To      : {lead['agent_email']}\n"
-                f"  Subject : {draft['subject']}\n"
-                f"\n{draft['body']}\n"
-                f"{'─'*60}\n"
+                f"  Subject : {safe_subject}\n"
+                f"\n{safe_body}\n"
+                f"{'-'*60}\n"
             )
 
             message_id = send_outreach(
@@ -201,18 +220,20 @@ def step_draft_and_send(run_id: int, dry_run_limit: int = 0) -> int:
                 body=draft["body"],
             )
 
+            attempted += 1
             if message_id:
                 models.mark_emailed(lead["id"], draft["subject"], draft["body"], message_id)
-                models.mark_pending_review(lead["id"])
                 sent += 1
                 logger.info(f"[outreach] Sent to {lead['agent_email']} for lead #{lead['id']}")
+                safe_addr = lead['property_address'].encode('ascii', errors='replace').decode('ascii')
+                safe_name = (lead.get('agent_name') or '').encode('ascii', errors='replace').decode('ascii')
                 print(
                     f"\n{'='*60}\n"
-                    f"  ACTION REQUIRED — Lead #{lead['id']} ready for review\n"
-                    f"  Property : {lead['property_address']}\n"
-                    f"  Agent    : {lead.get('agent_name')} <{lead['agent_email']}>\n"
+                    f"  EMAIL SENT — Lead #{lead['id']} in EMAILED_FREE\n"
+                    f"  Property : {safe_addr}\n"
+                    f"  Agent    : {safe_name} <{lead['agent_email']}>\n"
                     f"  Signal   : {lead['signal_type']} | Score: {lead.get('signal_score')}/100\n"
-                    f"  To fulfill: python scripts/mock_fulfill.py {lead['id']}\n"
+                    f"  Waiting for agent reply → conversation AI takes over\n"
                     f"{'='*60}\n"
                 )
             else:

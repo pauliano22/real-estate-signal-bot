@@ -18,8 +18,9 @@ from src.signals.base import SignalAdapter, PropertySignal
 logger = logging.getLogger(__name__)
 
 # Minimum thresholds for a signal to qualify
-PRICE_DROP_THRESHOLD_PCT = 10.0   # > 10% price reduction
-STALE_DOM_THRESHOLD = 90          # > 90 days on market
+# TEMP: lowered for dry run testing — restore to 10.0 / 90 for production
+PRICE_DROP_THRESHOLD_PCT = 1.0    # > 1% price reduction (test)
+STALE_DOM_THRESHOLD = 0           # any DOM (test)
 
 # Redfin's region search endpoint
 REDFIN_SEARCH_URL = "https://www.redfin.com/stingray/api/gis"
