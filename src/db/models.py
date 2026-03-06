@@ -1,10 +1,11 @@
 """
-src/db/models.py — SQLite state machine.
+src/db/models.py — PostgreSQL state machine.
 
 All DB access goes through this module. State transitions are enforced here —
 nothing outside this file should write state directly.
 """
-import sqlite3
+import psycopg2
+from psycopg2.extras import RealDictCursor
 from datetime import datetime, timezone
 from contextlib import contextmanager
 from typing import Optional
@@ -25,127 +26,37 @@ VALID_TRANSITIONS = {
     "FULFILLED":              set(),
     "STALE":                  set(),
     "ERROR":                  {"FOUND"},  # allows manual retry
-    # Legacy state — kept so existing records aren't broken, not produced going forward
+    # Legacy states — kept so existing records aren't broken
     "PENDING_MANUAL_REVIEW":  {"FULFILLED", "STALE", "ERROR"},
     "REPLIED":                {"INVOICED", "ERROR"},
 }
 
 
-def init_db():
-    """Create all tables if they don't exist. Safe to call on every startup."""
-    with sqlite3.connect(cfg.DB_PATH) as conn:
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA foreign_keys=ON")
-        conn.executescript("""
-            CREATE TABLE IF NOT EXISTS leads (
-                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-                property_address    TEXT NOT NULL UNIQUE,
-                zip_code            TEXT,
-                signal_type         TEXT,
-                listing_url         TEXT,
-                list_price          REAL,
-                original_price      REAL,
-                price_drop_pct      REAL,
-                days_on_market      INTEGER,
-                signal_score        REAL DEFAULT 0,
-                state               TEXT NOT NULL DEFAULT 'FOUND',
-                agent_name          TEXT,
-                agent_email         TEXT,
-                agent_phone         TEXT,
-                agent_company       TEXT,
-                agent_website       TEXT,
-                email_verified      INTEGER DEFAULT 0,
-                email_subject       TEXT,
-                email_body          TEXT,
-                sendgrid_message_id TEXT,
-                stripe_payment_link TEXT,
-                stripe_session_id   TEXT,
-                email_opened        INTEGER DEFAULT 0,
-                link_clicked        INTEGER DEFAULT 0,
-                found_at            TEXT,
-                enriched_at         TEXT,
-                emailed_at          TEXT,
-                replied_at          TEXT,
-                invoiced_at         TEXT,
-                paid_at             TEXT,
-                fulfilled_at        TEXT,
-                last_updated        TEXT
-            );
+class _Conn:
+    """Thin wrapper making psycopg2 behave like sqlite3 for our query patterns.
 
-            CREATE TABLE IF NOT EXISTS state_transitions (
-                id              INTEGER PRIMARY KEY AUTOINCREMENT,
-                lead_id         INTEGER NOT NULL,
-                from_state      TEXT,
-                to_state        TEXT,
-                reason          TEXT,
-                transitioned_at TEXT,
-                FOREIGN KEY (lead_id) REFERENCES leads(id)
-            );
+    - Translates ? placeholders to %s automatically.
+    - Returns RealDictRow from fetchone/fetchall so dict(row) works everywhere.
+    """
+    def __init__(self, pg_conn):
+        self._conn = pg_conn
+        self._cur = pg_conn.cursor(cursor_factory=RealDictCursor)
 
-            CREATE TABLE IF NOT EXISTS tracking_events (
-                id                INTEGER PRIMARY KEY AUTOINCREMENT,
-                lead_id           INTEGER NOT NULL,
-                event_type        TEXT NOT NULL,
-                tracking_token    TEXT UNIQUE,
-                link_destination  TEXT,
-                triggered_at      TEXT,
-                ip_address        TEXT,
-                user_agent        TEXT,
-                logged_at         TEXT,
-                FOREIGN KEY (lead_id) REFERENCES leads(id)
-            );
+    def execute(self, sql: str, params=()):
+        self._cur.execute(sql.replace("?", "%s"), params or ())
+        return self._cur
 
-            CREATE TABLE IF NOT EXISTS target_zips (
-                id        INTEGER PRIMARY KEY AUTOINCREMENT,
-                zip_code  TEXT UNIQUE NOT NULL,
-                city      TEXT,
-                state     TEXT,
-                active    INTEGER DEFAULT 1,
-                added_at  TEXT
-            );
-
-            CREATE TABLE IF NOT EXISTS run_log (
-                id                INTEGER PRIMARY KEY AUTOINCREMENT,
-                run_started_at    TEXT,
-                run_finished_at   TEXT,
-                signals_found     INTEGER DEFAULT 0,
-                agents_enriched   INTEGER DEFAULT 0,
-                emails_sent       INTEGER DEFAULT 0,
-                payments_received INTEGER DEFAULT 0,
-                errors            INTEGER DEFAULT 0,
-                status            TEXT
-            );
-
-            CREATE TABLE IF NOT EXISTS self_heal_log (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                source       TEXT,
-                zip_code     TEXT,
-                error_type   TEXT,
-                error_detail TEXT,
-                action_taken TEXT,
-                logged_at    TEXT
-            );
-
-            CREATE TABLE IF NOT EXISTS conversations (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                lead_id     INTEGER NOT NULL,
-                direction   TEXT NOT NULL,
-                from_email  TEXT,
-                to_email    TEXT,
-                subject     TEXT,
-                body        TEXT,
-                sent_at     TEXT,
-                FOREIGN KEY (lead_id) REFERENCES leads(id)
-            );
-        """)
+    def commit(self):   self._conn.commit()
+    def rollback(self): self._conn.rollback()
+    def close(self):
+        self._cur.close()
+        self._conn.close()
 
 
 @contextmanager
 def get_conn():
-    conn = sqlite3.connect(cfg.DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
+    pg = psycopg2.connect(cfg.DATABASE_URL)
+    conn = _Conn(pg)
     try:
         yield conn
         conn.commit()
@@ -158,6 +69,110 @@ def get_conn():
 
 def now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def init_db():
+    """Create all tables if they don't exist. Safe to call on every startup."""
+    pg = psycopg2.connect(cfg.DATABASE_URL)
+    pg.autocommit = True
+    cur = pg.cursor()
+    tables = [
+        """CREATE TABLE IF NOT EXISTS leads (
+            id                  SERIAL PRIMARY KEY,
+            property_address    TEXT NOT NULL UNIQUE,
+            zip_code            TEXT,
+            signal_type         TEXT,
+            listing_url         TEXT,
+            list_price          REAL,
+            original_price      REAL,
+            price_drop_pct      REAL,
+            days_on_market      INTEGER,
+            signal_score        REAL DEFAULT 0,
+            state               TEXT NOT NULL DEFAULT 'FOUND',
+            agent_name          TEXT,
+            agent_email         TEXT,
+            agent_phone         TEXT,
+            agent_company       TEXT,
+            agent_website       TEXT,
+            email_verified      INTEGER DEFAULT 0,
+            email_subject       TEXT,
+            email_body          TEXT,
+            sendgrid_message_id TEXT,
+            stripe_payment_link TEXT,
+            stripe_session_id   TEXT,
+            email_opened        INTEGER DEFAULT 0,
+            link_clicked        INTEGER DEFAULT 0,
+            found_at            TEXT,
+            enriched_at         TEXT,
+            emailed_at          TEXT,
+            replied_at          TEXT,
+            invoiced_at         TEXT,
+            paid_at             TEXT,
+            fulfilled_at        TEXT,
+            last_updated        TEXT
+        )""",
+        """CREATE TABLE IF NOT EXISTS state_transitions (
+            id              SERIAL PRIMARY KEY,
+            lead_id         INTEGER NOT NULL REFERENCES leads(id),
+            from_state      TEXT,
+            to_state        TEXT,
+            reason          TEXT,
+            transitioned_at TEXT
+        )""",
+        """CREATE TABLE IF NOT EXISTS tracking_events (
+            id                SERIAL PRIMARY KEY,
+            lead_id           INTEGER NOT NULL REFERENCES leads(id),
+            event_type        TEXT NOT NULL,
+            tracking_token    TEXT UNIQUE,
+            link_destination  TEXT,
+            triggered_at      TEXT,
+            ip_address        TEXT,
+            user_agent        TEXT,
+            logged_at         TEXT
+        )""",
+        """CREATE TABLE IF NOT EXISTS target_zips (
+            id        SERIAL PRIMARY KEY,
+            zip_code  TEXT UNIQUE NOT NULL,
+            city      TEXT,
+            state     TEXT,
+            active    INTEGER DEFAULT 1,
+            added_at  TEXT
+        )""",
+        """CREATE TABLE IF NOT EXISTS run_log (
+            id                SERIAL PRIMARY KEY,
+            run_started_at    TEXT,
+            run_finished_at   TEXT,
+            signals_found     INTEGER DEFAULT 0,
+            agents_enriched   INTEGER DEFAULT 0,
+            emails_sent       INTEGER DEFAULT 0,
+            payments_received INTEGER DEFAULT 0,
+            errors            INTEGER DEFAULT 0,
+            status            TEXT
+        )""",
+        """CREATE TABLE IF NOT EXISTS self_heal_log (
+            id           SERIAL PRIMARY KEY,
+            source       TEXT,
+            zip_code     TEXT,
+            error_type   TEXT,
+            error_detail TEXT,
+            action_taken TEXT,
+            logged_at    TEXT
+        )""",
+        """CREATE TABLE IF NOT EXISTS conversations (
+            id          SERIAL PRIMARY KEY,
+            lead_id     INTEGER NOT NULL REFERENCES leads(id),
+            direction   TEXT NOT NULL,
+            from_email  TEXT,
+            to_email    TEXT,
+            subject     TEXT,
+            body        TEXT,
+            sent_at     TEXT
+        )""",
+    ]
+    for stmt in tables:
+        cur.execute(stmt)
+    cur.close()
+    pg.close()
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +196,7 @@ def upsert_lead(
     """
     with get_conn() as conn:
         existing = conn.execute(
-            "SELECT id, state FROM leads WHERE property_address = ?",
+            "SELECT id FROM leads WHERE property_address = ?",
             (property_address,)
         ).fetchone()
 
@@ -194,12 +209,13 @@ def upsert_lead(
                  list_price, original_price, price_drop_pct, days_on_market,
                  signal_score, state, found_at, last_updated)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'FOUND', ?, ?)
+            RETURNING id
         """, (
             property_address, zip_code, signal_type, listing_url,
             list_price, original_price, price_drop_pct, days_on_market,
             signal_score, now(), now()
         ))
-        lead_id = cur.lastrowid
+        lead_id = cur.fetchone()["id"]
         _log_transition(conn, lead_id, None, "FOUND", "initial discovery")
         return lead_id
 
@@ -233,7 +249,7 @@ def mark_emailed(lead_id: int, subject: str, body: str, message_id: str):
     with get_conn() as conn:
         conn.execute("""
             UPDATE leads SET
-                email_subject=?, email_body=?, sendgrid_message_id=?,  -- stores Resend email ID
+                email_subject=?, email_body=?, sendgrid_message_id=?,
                 emailed_at=?, last_updated=?
             WHERE id=?
         """, (subject, body, message_id, now(), now(), lead_id))
@@ -377,7 +393,7 @@ def get_stale_candidates(days_since_email: int = 7) -> list[dict]:
             SELECT * FROM leads
             WHERE state IN ('EMAILED_FREE', 'NEGOTIATING', 'PENDING_OPERATOR', 'PENDING_MANUAL_REVIEW')
               AND emailed_at IS NOT NULL
-              AND (julianday('now') - julianday(last_updated)) > ?
+              AND last_updated::timestamptz < NOW() - make_interval(days => %s)
         """, (days_since_email,)).fetchall()
         return [dict(r) for r in rows]
 
@@ -386,12 +402,12 @@ def record_tracking_event(lead_id: int, event_type: str, token: str,
                            destination: str = None, ip: str = None, ua: str = None):
     with get_conn() as conn:
         conn.execute("""
-            INSERT OR IGNORE INTO tracking_events
+            INSERT INTO tracking_events
                 (lead_id, event_type, tracking_token, link_destination,
                  triggered_at, ip_address, user_agent, logged_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (tracking_token) DO NOTHING
         """, (lead_id, event_type, token, destination, now(), ip, ua, now()))
-        # Update lead flags
         if event_type == "open":
             conn.execute(
                 "UPDATE leads SET email_opened=1, last_updated=? WHERE id=?",
@@ -410,17 +426,16 @@ def record_tracking_event(lead_id: int, event_type: str, token: str,
 
 def get_active_zips() -> list[dict]:
     with get_conn() as conn:
-        rows = conn.execute(
-            "SELECT * FROM target_zips WHERE active=1"
-        ).fetchall()
+        rows = conn.execute("SELECT * FROM target_zips WHERE active=1").fetchall()
         return [dict(r) for r in rows]
 
 
 def add_zip(zip_code: str, city: str = None, state_abbr: str = None):
     with get_conn() as conn:
         conn.execute("""
-            INSERT OR IGNORE INTO target_zips (zip_code, city, state, added_at)
+            INSERT INTO target_zips (zip_code, city, state, added_at)
             VALUES (?, ?, ?, ?)
+            ON CONFLICT (zip_code) DO NOTHING
         """, (zip_code, city, state_abbr, now()))
 
 
@@ -431,10 +446,10 @@ def add_zip(zip_code: str, city: str = None, state_abbr: str = None):
 def start_run() -> int:
     with get_conn() as conn:
         cur = conn.execute(
-            "INSERT INTO run_log (run_started_at, status) VALUES (?, 'running')",
+            "INSERT INTO run_log (run_started_at, status) VALUES (?, 'running') RETURNING id",
             (now(),)
         )
-        return cur.lastrowid
+        return cur.fetchone()["id"]
 
 
 def finish_run(run_id: int, signals: int, enriched: int,
@@ -466,24 +481,6 @@ def log_self_heal(source: str, zip_code: str, error_type: str,
 # Conversations
 # ---------------------------------------------------------------------------
 
-def _ensure_conversations_table():
-    """Idempotent migration — creates the conversations table if missing."""
-    with get_conn() as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS conversations (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                lead_id     INTEGER NOT NULL,
-                direction   TEXT NOT NULL,
-                from_email  TEXT,
-                to_email    TEXT,
-                subject     TEXT,
-                body        TEXT,
-                sent_at     TEXT,
-                FOREIGN KEY (lead_id) REFERENCES leads(id)
-            )
-        """)
-
-
 def store_message(
     lead_id: int,
     direction: str,
@@ -493,7 +490,6 @@ def store_message(
     body: str,
 ):
     """Persist an inbound or outbound message to the conversations log."""
-    _ensure_conversations_table()
     with get_conn() as conn:
         conn.execute("""
             INSERT INTO conversations
@@ -504,7 +500,6 @@ def store_message(
 
 def get_thread(lead_id: int) -> list[dict]:
     """Return all messages for a lead in chronological order."""
-    _ensure_conversations_table()
     with get_conn() as conn:
         rows = conn.execute(
             "SELECT * FROM conversations WHERE lead_id=? ORDER BY sent_at ASC",

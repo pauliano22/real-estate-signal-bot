@@ -45,8 +45,8 @@ class Config:
     # Scheduler
     MONITOR_INTERVAL_MINUTES: int = int(os.environ.get("MONITOR_INTERVAL_MINUTES", "30"))
 
-    # Database
-    DB_PATH: str = os.path.join(os.path.dirname(__file__), "engine.db")
+    # Database — Railway sets DATABASE_URL automatically for Postgres add-on
+    DATABASE_URL: str = os.environ["DATABASE_URL"]
 
     # Scraping
     REQUEST_TIMEOUT: int = 15

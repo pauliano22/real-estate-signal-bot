@@ -1,11 +1,11 @@
 """
-scripts/seed_prod_lead.py — Insert a test lead into the production database.
+scripts/seed_prod_lead.py — Insert a test lead into the production Postgres database.
 
-Run via Railway CLI:
+Requires DATABASE_URL in the environment. Run via Railway CLI:
     railway run python scripts/seed_prod_lead.py
 
-Or locally against your local engine.db:
-    python scripts/seed_prod_lead.py
+Or locally with DATABASE_URL set:
+    DATABASE_URL=postgresql://... python scripts/seed_prod_lead.py
 """
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
