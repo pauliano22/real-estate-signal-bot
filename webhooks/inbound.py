@@ -1,15 +1,16 @@
 """
 webhooks/inbound.py — Handle inbound emails forwarded by Resend.
 
-Resend POSTs a JSON payload to POST /inbound/email when an agent replies.
-We parse the lead_id from the reply+{id}@reply.domain tag in the To field,
-store the message, and hand off to the conversation handler.
+Resend POSTs a webhook with only email metadata (body is omitted to avoid
+payload size limits). We fetch the full email body via GET /emails/{email_id}.
 """
 import logging
 import re
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+import httpx
+from config import cfg
 from src.db import models
 from src.conversation.handler import handle_reply
 
@@ -27,13 +28,22 @@ def _parse_lead_id(to_field: str) -> int | None:
     return None
 
 
-def _extract_body(payload: dict) -> str:
-    """Prefer plain text; fall back to stripping HTML tags."""
-    text = payload.get("text") or payload.get("plain") or ""
-    if text:
+def _fetch_email_body(email_id: str) -> str:
+    """Fetch full email from Resend API and return plain text (or stripped HTML)."""
+    url = f"https://api.resend.com/emails/{email_id}"
+    try:
+        resp = httpx.get(url, headers={"Authorization": f"Bearer {cfg.RESEND_API_KEY}"}, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        logger.error(f"[inbound] Failed to fetch email {email_id} from Resend: {e}")
+        return ""
+
+    text = data.get("text") or ""
+    if text.strip():
         return text.strip()
-    html = payload.get("html") or ""
-    # Minimal HTML strip — good enough for reply context
+
+    html = data.get("html") or ""
     clean = re.sub(r"<[^>]+>", " ", html)
     return re.sub(r"\s+", " ", clean).strip()
 
@@ -43,13 +53,24 @@ def handle_inbound(payload: dict) -> None:
     Main entry point called by the Flask route.
     Expects a Resend inbound webhook payload (dict).
     """
-    to_field = payload.get("to") or ""
-    from_email = payload.get("from") or ""
-    subject = payload.get("subject") or ""
-    body = _extract_body(payload)
+    # Resend nests metadata under "data"
+    data = payload.get("data") or payload
+    email_id = data.get("email_id") or ""
+
+    to_raw = data.get("to") or ""
+    # "to" may be a list or a plain string
+    to_field = to_raw[0] if isinstance(to_raw, list) else to_raw
+    from_email = data.get("from") or ""
+    subject = data.get("subject") or ""
+
+    if not email_id:
+        logger.warning("[inbound] No email_id in payload — ignoring")
+        return
+
+    body = _fetch_email_body(email_id)
 
     if not body:
-        logger.warning("[inbound] Empty body — ignoring")
+        logger.warning(f"[inbound] Empty body for email_id={email_id} — ignoring")
         return
 
     # Resolve lead by +tag, then fall back to sender email
